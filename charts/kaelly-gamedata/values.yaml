@@ -1,0 +1,41 @@
+# Default values for kaelly-gamedata.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+affinity: {}
+
+configMap:
+  METRIC_PORT: "2112"
+  LOG_LEVEL: "info"
+  PRODUCTION: "false"
+  # Download, diff and report, write nothing. Switch to "false" after the first checked run.
+  DRY_RUN: "true"
+
+secrets:
+  MYSQL_URL: "localhost:3306"
+  MYSQL_USER: ""
+  MYSQL_PASSWORD: ""
+  MYSQL_DATABASE: "kaellybot"
+  RABBITMQ_ADDRESS: "amqp://localhost:5672"
+
+cronjob:
+  schedule: "0 */12 * * *"
+  concurrencyPolicy: "Forbid"
+  name: "kaelly-gamedata"
+  image:
+    repository: ghcr.io/kaellybot/kaelly-gamedata
+    tag: ""
+  command: []
+  args: []
+  restartPolicy: "OnFailure"
+  resources:
+    limits:
+      # cpu: 100m
+      memory: 1Gi
+    requests:
+      # cpu: 100m
+      memory: 256Mi

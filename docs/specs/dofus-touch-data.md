@@ -244,7 +244,7 @@ On every run, after game data:
 
 ### 5.7 Alerts
 
-A `REJECTED`, `FAILED` or `PARTIAL` import publishes a `NEWS_IMPORT` message (§9.4): game, source, build version, status, reason. Kaelly-notifier posts it to the shared reporting channel, like `NEWS_SET`. `APPLIED` and `UNCHANGED` imports send nothing.
+A `REJECTED`, `FAILED` or `PARTIAL` import publishes a `NEWS_IMPORT` message (§9.4): game, import id, source, build version, status, reason. Kaelly-notifier posts it to the shared reporting channel, like `NEWS_SET`. `APPLIED` and `UNCHANGED` imports send nothing.
 
 ## 6. Kaelly-encyclopedia, read side
 
@@ -310,19 +310,29 @@ Everything above. Phase 1 (§12) only needs `Items`, `ItemTypes`, `AlmanaxCalend
 Needed from phase 1 (§5.7). In kaelly-amqp, a new news type, sketch:
 
 ```proto
-// RabbitMQMessage.Type gains NEWS_IMPORT, RabbitMQMessage gains newsImportMessage.
+// RabbitMQMessage.Type gains NEWS_IMPORT = 806, RabbitMQMessage gains newsImportMessage = 606.
+// Sent by kaelly-gamedata when an import is not fully applied.
 message NewsImportMessage
 {
-    string source    = 1; // CLIENT, KROSMOZ
-    string version   = 2; // build version, empty for KROSMOZ
-    Status status    = 3;
-    string reason    = 4; // gate rule hit, error, or unmatched almanax days
+    int64  importId = 1; // game_data_imports.id, whose report holds the details
+    Source source   = 2;
+    string version  = 3; // build version, empty for KROSMOZ
+    Status status   = 4;
+    string reason   = 5; // gate rule hit, error, or unmatched almanax days
+
+    enum Source
+    {
+        UNKNOWN_SOURCE = 0;
+        CLIENT         = 1;
+        KROSMOZ        = 2;
+    }
+
     enum Status
     {
-        UNKNOWN  = 0;
-        REJECTED = 1;
-        FAILED   = 2;
-        PARTIAL  = 3; // applied, but some almanax days unmatched
+        UNKNOWN_STATUS = 0;
+        REJECTED       = 1;
+        FAILED         = 2;
+        PARTIAL        = 3; // applied, but some almanax days unmatched
     }
 }
 ```

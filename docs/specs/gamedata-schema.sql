@@ -266,3 +266,16 @@ ALTER TABLE `almanaxes`
     REFERENCES `almanax_calendars` (`id`, `game`) ON DELETE RESTRICT,
   ADD CONSTRAINT `fk_almanaxes_offering` FOREIGN KEY (`offering_item_id`, `game`)
     REFERENCES `items` (`id`, `game`) ON DELETE RESTRICT;
+
+-- Last Krosmoz crawl of each day of the cycle. Each run crawls a small batch:
+-- never-crawled days first, then the oldest ones (rolling crawl).
+CREATE TABLE `almanax_crawls` (
+  `month`      int NOT NULL,
+  `day`        int NOT NULL,
+  `game`       int NOT NULL,
+  `crawled_at` datetime NOT NULL,
+  `status`     enum('MATCHED','UNMATCHED') NOT NULL,
+  `reason`     varchar(500) DEFAULT NULL,           -- why the day is unmatched
+  PRIMARY KEY (`month`, `day`, `game`),
+  KEY `idx_almanax_crawls_age` (`game`, `crawled_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

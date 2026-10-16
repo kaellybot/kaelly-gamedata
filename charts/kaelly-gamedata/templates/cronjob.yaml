@@ -23,4 +23,11 @@ spec:
                   name: {{ .Release.Name }}-secrets
             resources:
               {{- toYaml .Values.cronjob.resources | nindent 12 }}
+            volumeMounts:
+              - name: data
+                mountPath: {{ .Values.configMap.STORAGE_PATH }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-data
           restartPolicy: {{ .Values.cronjob.restartPolicy }}

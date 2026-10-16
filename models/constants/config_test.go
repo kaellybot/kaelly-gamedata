@@ -44,7 +44,7 @@ func TestEveryDefaultIsRegistered(t *testing.T) {
 	keys := []string{
 		MySQLURL, MySQLUser, MySQLPassword, MySQLDatabase, RabbitMQAddress,
 		TouchConfigURL, TouchLanguages, TouchUserAgent,
-		KrosmozAlmanaxURL, KrosmozLanguage, KrosmozUserAgent, AlmanaxRefreshInterval,
+		KrosmozAlmanaxURL, KrosmozLanguage, KrosmozUserAgent, AlmanaxRefreshInterval, KrosmozDaysPerRun,
 		MaxDeletedRatio, SnapshotRetention, StoragePath, CDNBaseURL, HTTPTimeout, DryRun,
 		MetricPort, LogLevel, Production,
 	}

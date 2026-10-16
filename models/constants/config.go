@@ -42,8 +42,11 @@ const (
 	// User Agent to call Krosmoz. The KaellyBot IP is whitelisted, a browser one is the fallback.
 	KrosmozUserAgent = "KROSMOZ_USER_AGENT"
 
-	// Minimum duration between two Krosmoz crawls. Duration type.
+	// Age after which a crawled almanax day is crawled again. Duration type.
 	AlmanaxRefreshInterval = "ALMANAX_REFRESH_INTERVAL"
+
+	// Maximum Krosmoz days crawled per run (rolling crawl).
+	KrosmozDaysPerRun = "KROSMOZ_DAYS_PER_RUN"
 
 	// Ratio of deleted rows in a table above which an import is rejected.
 	MaxDeletedRatio = "MAX_DELETED_RATIO"
@@ -82,7 +85,8 @@ const (
 	defaultUserAgent              = "KaellyBot-Gamedata/1.0 (+https://github.com/kaellybot/kaelly-gamedata)"
 	defaultKrosmozAlmanaxURL      = "https://www.krosmoz.com/%s/almanax/%s"
 	defaultKrosmozLanguage        = "fr"
-	defaultAlmanaxRefreshInterval = 30 * 24 * time.Hour
+	defaultAlmanaxRefreshInterval = 7 * 24 * time.Hour
+	defaultKrosmozDaysPerRun      = 31
 	defaultMaxDeletedRatio        = 0.05
 	defaultSnapshotRetention      = 10
 	defaultStoragePath            = "/data"
@@ -108,6 +112,7 @@ func GetDefaultConfigValues() map[string]any {
 		KrosmozLanguage:        defaultKrosmozLanguage,
 		KrosmozUserAgent:       defaultUserAgent,
 		AlmanaxRefreshInterval: defaultAlmanaxRefreshInterval,
+		KrosmozDaysPerRun:      defaultKrosmozDaysPerRun,
 		MaxDeletedRatio:        defaultMaxDeletedRatio,
 		SnapshotRetention:      defaultSnapshotRetention,
 		StoragePath:            defaultStoragePath,

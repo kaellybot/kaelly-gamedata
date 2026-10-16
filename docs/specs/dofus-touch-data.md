@@ -79,6 +79,7 @@ The client knows the 378 bonuses but not which day gets which. The game server s
   - Normalise whitespace and strip HTML before matching: a raw comparison misses.
 - **The offering image gives the icon id**: `https://static.ankama.com/dofus-touch/www/game/items/200/<iconId>.w75h75.png` (57001 on 2026-10-16). Names are not unique ("Cadeau de Nowel" is items 8337, 12132 and 12816), so the offering is matched on **name and icon id**: 2026-12-25 gives icon 89002, item 12132.
 - **No kamas reward** is shown for Touch: `almanaxes.kamas_reward` stays `NULL` for Touch.
+- **365 of the 366 days join** (crawl of 2026-10-16). The exception is **26/04**: krosmoz shows the bonus "Quêtes et kamas" ("Les gains de kamas sont augmentés de 100 % pour toutes les quêtes."), which exists in no language of the client's `AlmanaxCalendars` (378 entries, ids up to 385, so some were removed). Its offering (Bourse Suspecte, item 13505) exists. The day is stored with its offering and no bonus (§5.5, §13).
 
 ### 2.3 Not used
 
@@ -104,7 +105,7 @@ k3s CronJob (kaelly-gamedata)                         Kaelly-encyclopedia
 - **One CronJob, like kaelly-rss and kaelly-twitter**, **every 12 hours** (`0 */12 * * *`): each run does its work and exits. `concurrencyPolicy: Forbid`, so a slow run is never overlapped.
 - **Low footprint**: one run every 12h, requests sent one after the other, raw data never republished (only the bot's answers and the set images derived from it).
   - Every source: a User-Agent naming KaellyBot with a contact URL (`KaellyBot-Gamedata/1.0 (+https://github.com/kaellybot/kaelly-gamedata)`).
-  - krosmoz: the VPS IP is whitelisted (§2.2). About 366 requests a month, in one language (§5.5). `KROSMOZ_USER_AGENT` stays configurable, as a fallback if the whitelist stops covering the bot filter.
+  - krosmoz: the VPS IP is whitelisted (§2.2). At most 31 pages per run, 0.5 s apart, in one language, stopping and backing off at the first refusal (§5.5). `KROSMOZ_USER_AGENT` stays configurable, as a fallback if the whitelist stops covering the bot filter.
 - **Every run also checks the almanax** (§5.5). That keeps a single CronJob and the same chart as kaelly-twitter.
 - **One transaction** writes the data and the new `game_versions` row. The encyclopedia sees either the whole previous release or the whole new one.
 
@@ -171,7 +172,8 @@ Configuration (`models/constants/config.go`, same pattern and defaults map as ka
 | `KROSMOZ_ALMANAX_URL` | `https://www.krosmoz.com/%s/almanax/%s` | |
 | `KROSMOZ_LANGUAGE` | `fr` | the only language crawled (§5.5) |
 | `KROSMOZ_USER_AGENT` | same as `TOUCH_USER_AGENT` | VPS IP whitelisted by krosmoz; a browser UA is the fallback (§2.2) |
-| `ALMANAX_REFRESH_INTERVAL` | `720h` | §5.5 |
+| `ALMANAX_REFRESH_INTERVAL` | `168h` | age after which a crawled day is crawled again (§5.5) |
+| `KROSMOZ_DAYS_PER_RUN` | `31` | rolling crawl batch (§5.5) |
 | `MAX_DELETED_RATIO` | `0.05` | validation gate (§5.4) |
 | `SNAPSHOT_RETENTION` | `10` | raw snapshots kept for the last N applied imports (§5.2) |
 | `STORAGE_PATH` | `/data` | volume mount; `public/` served, `raw/` private (§8) |
@@ -194,7 +196,7 @@ Every run downloads everything; **the file hashes decide** whether anything chan
 
 For each table and language: download, `sha256` the body, write it to the volume as `raw/touch/<sha256>.json.gz` (content-addressed, so an unchanged table is stored once), record a `game_data_import_files` row.
 
-**If every hash equals the last `APPLIED` import's, the import ends as `UNCHANGED`**: no transform, no diff, no news. Otherwise only the tables whose hash changed, and the tables that depend on them, are transformed (e.g. a new `Effects` re-renders every effect label).
+**If every hash equals the last `APPLIED` (or `UNCHANGED`) import's, the import ends as `UNCHANGED`**: no diff, no data write, no news. A new build with the same data still moves `game_versions`, so the encyclopedia announces it. Otherwise every table is mapped (a few seconds) and diffed; the record hashes keep the writes to what changed.
 
 Retention: after an apply, raw objects referenced by none of the last `SNAPSHOT_RETENTION` (10) applied imports are deleted.
 
@@ -222,18 +224,25 @@ The import is **rejected** (`status = REJECTED`, nothing written, alert sent, §
 
 krosmoz is only used to pick, for each day, **which calendar entry and which offering**. Every text the bot shows (bonus, offering name, in fr/en/es/pt) comes from the client tables. So:
 
-- **One language is crawled** (`KROSMOZ_LANGUAGE`, `fr`): 366 requests instead of 1 464.
-- **The 366 month/day pairs are crawled**, not "the next 366 days": 29/02 is taken from the next leap year (2028-02-29), otherwise it is missing three years out of four.
+- **One language is crawled** (`KROSMOZ_LANGUAGE`, `fr`).
+- **The cycle is the 366 month/day pairs**, each at its next occurrence: 29/02 is taken from the next leap year (2028-02-29), otherwise it is missing three years out of four.
+- **The join uses the client data downloaded in the same run** (every run downloads it, §5.1), not the database. It works in dry run, and a client update never requires a re-join: the almanax rows hold ids, and the labels are read through them.
 
-On every run, after game data:
+**Rolling crawl.** Crawling the 366 days at once is a burst krosmoz could rate limit. Each run crawls a small batch instead, and `almanax_crawls` keeps, per day, when it was last crawled and whether it matched:
 
-1. **Crawl** if the last applied `KROSMOZ` import is older than `ALMANAX_REFRESH_INTERVAL`. The pages are stored like any raw file (one `game_data_imports` row with `source = KROSMOZ`, one file per crawl).
-2. **Join** after a crawl, and also after game data was applied, from the stored krosmoz snapshot (no new crawl). For each day, take the Touch block (§2.2), then:
-   - match the bonus text against `almanax_calendar_labels.description` (fr)
-   - match the offering on name (`item_labels.name`, fr) **and** icon id (from the offering image URL, §2.2)
-   - read the quantity. No kamas reward is shown for Touch (`kamas_reward = NULL`)
-3. Diff on `(month, day, game)` with `content_hash`, apply in one transaction.
-4. A day that doesn't match its calendar entry or its offering keeps its previous row. The import ends as `PARTIAL` and lists the day in its report and its alert (§5.7), so it can be fixed by hand.
+1. **Backoff first**: if the last `KROSMOZ` import was blocked and its `blockedUntil` is in the future, nothing is requested.
+2. **Pick** at most `KROSMOZ_DAYS_PER_RUN` (31) days: never-crawled days first, then the oldest crawls, skipping the days crawled within `ALMANAX_REFRESH_INTERVAL` (7 days). With 2 runs a day, the first fill takes 6 days and every day is then refreshed about weekly. A one-off manual run with a larger `KROSMOZ_DAYS_PER_RUN` fills it at once.
+3. **Crawl** the pages one by one, 0.5 s apart. A page without a Touch block is kept and reported. On **403, 429 or 503** the crawl stops at once, with no retry; any other failure is retried once, then stops the crawl. **The pages fetched before the stop are applied**, nothing is lost.
+4. **Join** each day to the client data (§2.2):
+   - bonus: name and description against `almanax_calendar_labels` (fr), then description alone. Entries with the same texts only differ in wording in other languages: the lowest id wins
+   - offering: name (`item_labels.name`, fr) **and** icon id (from the offering image URL)
+   - quantity. No kamas reward is shown for Touch (`kamas_reward = NULL`)
+5. **Apply** in one transaction: the joined days (diff on `(month, day, game)` with `content_hash`), the crawl state of every crawled day, the import row.
+   - **A half that cannot be joined is left NULL**: an unknown bonus gives a row with the offering and `calendar_id` NULL (26/04), an unknown offering a row with the bonus and the offering NULL. The day is still recorded as unmatched, with the reason.
+   - A day with neither half joined, or whose page could not be read, keeps its previous row.
+6. **After a block**, the import report holds `blockedUntil` and `blockedStreak`: the next crawl waits 12h, then 24h, 48h… up to 7 days, and never less than krosmoz's `Retry-After`.
+
+Statuses: `FAILED` if the crawl stopped before any page, `PARTIAL` if it stopped midway or a day is unmatched, `UNCHANGED` if nothing changed, `APPLIED` otherwise. **Alerts** (§5.7) are sent for a stopped crawl and for days that **became** unmatched (or whose reason changed): a day that stays unmatched is not alerted again on each refresh.
 
 ### 5.6 Apply and news
 
@@ -255,6 +264,7 @@ A `REJECTED`, `FAILED` or `PARTIAL` import publishes a `NEWS_IMPORT` message (§
 - The Dofus-only game event handlers skip Touch: `reconcileDofusDudeIDs` (almanax) and `syncSetImages` (sets).
 - **Consistent reads**: one answer takes several queries (item, labels, effects, recipe). Run them in one read-only transaction, so an import committing in between can't mix two releases in one answer.
 - **Icons**: `https://static.ankama.com/dofus-touch/www/game/items/200/<icon_id>.png` (§2.1). No CDN needed for phase 1.
+- **A Touch almanax day can be partial**: `calendar_id` NULL (bonus unknown, e.g. 26/04) or offering NULL. The answer shows the half it has, and says the other one is unknown.
 - **Cache keys carry the release**: `source/game/version/type/...` instead of `source/game/type/...` (`services/sources/stores.go`). Old entries are never read again and expire with the TTL. No flush, and the per-pod TinyLFU cache is covered too.
 - Image URL = `CDN_BASE_URL` + `sets.image_key`, `fallback.webp` while `is_current = 0`. Only `is_wearable = 1` sets are served.
 - `de` requests for Touch read `en` labels.
@@ -265,7 +275,7 @@ A `REJECTED`, `FAILED` or `PARTIAL` import publishes a `NEWS_IMPORT` message (§
 | --- | --- | --- |
 | `effectId` | `item_effects.effect_id`, `set_bonuses.effect_id` | mapped to match dofusdude (real Dofus ids). **An id with no Dofus equivalent keeps its Touch id and its rendered label**: the bot shows it with no emoji, nothing is hidden |
 | `Effects.characteristic` | `characteristic_id` | mapped to match dofusdude, used by the bot for emojis. Unmapped = no emoji |
-| `typeId` | `item_types.item_type`, `item_types.equipment_type` | mapped to `amqp.ItemType` / `amqp.EquipmentType`, `NULL` = not served |
+| `typeId` | `item_types.item_type`, `item_types.equipment_type` | `item_type` from the super type (phase 1): equipment 1–5, 7, 10–13; consumable 6, 16, 43, 49; resource 9; quest item 14; mount 21; cosmetic 22–24, 26–28; others (cubes, gems, breloques, buffs…) `NULL` = not served. `equipment_type` per type id in phase 2 |
 | `lang` | `locale` | `amqp.Language`: fr 1, en 2, es 3, pt 5. `de` (4) never written |
 | set membership | `set_items` | from `ItemSets.items` (consistent with `Items.itemSetIds` for all items) |
 | wearable set | `sets.is_wearable` | every member is equipment and the set has bonuses |
@@ -362,7 +372,7 @@ Nothing on the k3s is exposed today. Serving `cdn.kaellybot.com` needs:
 | Item types | `item_types`, `item_type_labels` |
 | Items | `items`, `item_labels`, `item_effects`, `item_effect_labels`, `item_recipes` |
 | Sets | existing `sets` (extended: `level`, `is_cosmetic`, `content_hash`, `render_hash`, `image_key`, `is_wearable`), `set_labels`, `set_items`, `set_bonuses`, `set_bonus_labels` |
-| Almanax | `almanax_calendars`, `almanax_calendar_labels`, existing `almanaxes` (extended: `calendar_id`, `offering_item_id`, `offering_quantity`, `kamas_reward`, `content_hash`) |
+| Almanax | `almanax_calendars`, `almanax_calendar_labels`, existing `almanaxes` (extended: `calendar_id`, `offering_item_id`, `offering_quantity`, `kamas_reward`, `content_hash`), `almanax_crawls` (rolling crawl state) |
 
 The existing tables are extended, not replaced: the Dofus rows keep working with their current columns (`sets.hash`, `sets.icon`, `almanaxes.dofus_dude_effect_id`), which become legacy once Dofus moves over.
 
@@ -379,6 +389,13 @@ The schema is designed for Dofus too: every key includes `game`. Moving Dofus of
   - 29/02 has a row after the first crawl (taken from 2028-02-29)
   - **from the VPS**, a krosmoz request with the KaellyBot User-Agent gets 200 (the whitelist covers the bot filter). If it gets 403, set `KROSMOZ_USER_AGENT` to a browser UA and raise it with krosmoz
 - **`DRY_RUN=true`** on the cluster before the first real run: full download, diff and report, nothing written.
+- **Checked locally on 2026-10-16** (MySQL 8.4 with `kaellybot.sql` + this schema, RabbitMQ 4, real Ankama sources):
+  - first apply: 243 item types, 13 679 items, 378 calendar entries, each with 4 languages; `game_versions` = `1.74.8`; 365 days joined, 26/04 unmatched, `PARTIAL` alert received
+  - re-diff of a second download against the database: 0 created, updated or deleted, so the hashes are deterministic
+  - unchanged run: `UNCHANGED`, no write
+  - `de` added to the languages: `REJECTED` by the gate, alert received, no German label written
+  - rolling crawl: two runs crawl 31 different days each, starting today
+  - block: a proxy answering 429 after 5 pages; the crawl stops at the 6th request, keeps the 5 days, sets a 12h backoff (longer than the 2h `Retry-After`), alerts; the next run sends no request
 - After the first apply: `game_versions` holds `1.74.8` for `DOFUS_TOUCH`, row counts match §2.1, `/almanax` answers on kaellytouch-discord.
 
 ## 12. Rollout
@@ -403,11 +420,13 @@ The schema is designed for Dofus too: every key includes `game`. Moving Dofus of
 | Icon redrawn under the same `iconId` | Not detected: bump the renderer version to force a re-render (§8) |
 | Terms of use | Proceed with a low footprint: 12h runs, KaellyBot User-Agent with a contact URL, raw data never republished (§3) |
 | krosmoz access | The KaellyBot VPS IP is whitelisted by krosmoz (agreed with them). KaellyBot User-Agent there too; a browser UA only as a configured fallback (§2.2) |
-| krosmoz crawl | One language, the 366 month/day pairs (29/02 from the next leap year), monthly; re-join from the snapshot after a game update (§5.5) |
+| krosmoz crawl | One language, the 366 month/day pairs (29/02 from the next leap year), joined to the client data of the same run (§5.5) |
+| krosmoz resilience | Rolling crawl: 31 days per run (never crawled first, then oldest), stop at once on 403/429/503 and keep what was fetched, backoff 12h → 7 days, honor `Retry-After` (§5.5) |
 | Alerts | `NEWS_IMPORT` to the shared reporting channel on rejected / failed imports and unmatched almanax days (§5.7, §9.4) |
 | Icons | Ankama's stable static URL, no mirror (§2.1) |
+| Day with a bonus or an offering unknown to the client (26/04) | Store the half that joins, the other NULL; one alert when the day becomes unmatched (§5.5). Ask krosmoz whether its 26/04 is current: if they fix it, the weekly refresh picks it up |
 
-No open question left. Infrastructure prerequisites for phase 3 (DNS on Cloudflare, Origin Certificate, firewall, ingress) are listed in §9.6.
+Infrastructure prerequisites for phase 3 (DNS on Cloudflare, Origin Certificate, firewall, ingress) are listed in §9.6.
 
 ## 14. Future work (not in this spec)
 

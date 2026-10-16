@@ -14,6 +14,12 @@ configMap:
   PRODUCTION: "false"
   # Download, diff and report, write nothing. Switch to "false" after the first checked run.
   DRY_RUN: "true"
+  STORAGE_PATH: "/data"
+
+# Volume holding the raw snapshots (raw/), and the CDN images in phase 3 (public/).
+storage:
+  className: "local-path"
+  size: "2Gi"
 
 secrets:
   MYSQL_URL: "localhost:3306"

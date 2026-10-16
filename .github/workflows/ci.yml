@@ -7,8 +7,8 @@ on:
       - master
   pull_request:
   release:
+    # published only: "created" fires for the same release, and two deploys race.
     types:
-      - created
       - published
 
 permissions:
